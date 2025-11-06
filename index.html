@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ASM THUMB 编译器</title>
-    
+    <link id="favicon" rel="shortcut icon" href="./img/favicon.webp" type="image/x-icon">
 <style>
     * { 
         padding: 0; 
@@ -50,7 +50,7 @@
         white-space: pre;
     }
     #et_result {
-        width: 80%;
+        width: 98%;
         height: 30vh;
         margin-top: 10px;
         padding: 5px;
@@ -84,16 +84,19 @@
     <textarea id="et_result" readonly></textarea>
 
 </body>
+
 <script data-main="js/main" src="./js/require.js" async></script>
-<script src="./js/arm-none-eabi-as.js"></script>
-<script src="./js/arm-none-eabi-objcopy.js"></script>
-<link rel="preload" href="./js/as.wasm" as="script" crossorigin="anonymous">
-<link rel="preload" href="./js/objcopy.wasm" as="script" crossorigin="anonymous">
+<link id="lk-as-js" rel="preload" href="./js/arm-none-eabi-as.js" as="script">
+<link id="lk-objcopy-js" rel="preload" href="./js/arm-none-eabi-objcopy.js" as="script">
+<link id="lk-as-wasm" rel="preload" href="./js/as.wasm" as="script">
+<link id="lk-objcopy-wasm" rel="preload" href="./js/objcopy.wasm" as="script">
 
 <script>
 let etCode = document.getElementById("et_code");
 let gutter = document.getElementById("gutter");
 let etResult = document.getElementById("et_result");
+
+let onWasmLoadedPostRun = null;
 
 function updateGutter() {
     const codeText = etCode.value;
@@ -125,21 +128,63 @@ let localCode = localStorage.getItem("asthumn_asm_code");
 
 editor.setValue(localCode || initialCode);
 
-updateGutter();
+const etResultResizeObserver = new ResizeObserver(entries => {
+    const entry = entries[0];
+    const width = entry.contentRect.width;
+    let fontSize = (width-10) / 25.8;
+    if(fontSize < 8) 
+        fontSize = 8;
+    else if(fontSize > 18)
+        fontSize = 18;
+    entry.target.style.fontSize = fontSize + 'px';
+});
+etResultResizeObserver.observe(etResult);
 
-document.getElementById("btn_assemble").onclick = async function() {
-    let codeText = editor.getValue();
-    if(codeText.trim().length == 0){
-        toast("代码不能为空！");
+const linkElements = [
+    document.getElementById("lk-as-js"),
+    document.getElementById("lk-objcopy-js"),
+    document.getElementById("lk-as-wasm"),
+    document.getElementById("lk-objcopy-wasm"),
+];
+
+function linkElementOnload(el){
+    el.isLoadComplete = true;
+    if(isCoreLoade()){
+        const onPostRun = onWasmLoadedPostRun;
+        if(onPostRun){
+            onWasmLoadedPostRun = null;
+            onPostRun();
+        }
+    }
+}
+
+linkElements.forEach(el=>{
+    el.onload = function(){ linkElementOnload(el) }
+});
+
+function isCoreLoade(){
+    for(let i=0;i<linkElements.length;i++){
+        const el = linkElements[i];
+        if(el.isLoadComplete)
+            continue;
+        const entries = performance.getEntriesByName(el.href);
+        if(!entries || entries.length == 0){
+            return false;
+        }
+    }
+    return true;
+}
+
+async function doAssembleThumb(codeText){
+    if(typeof assembleThumb !== 'function'){
+        const t = setInterval(() => {
+            if(typeof assembleThumb === 'function'){
+                clearInterval(t);
+                doAssembleThumb(codeText);
+            }
+        },500);
         return;
     }
-
-    if(etResult.value == "编译中..."){
-        toast("正在编译中，请稍后...");
-        return;
-    }
-
-    etResult.value = "编译中...";
 
     let filename = `asm_${new Date().getTime().toString(16)}`;
 
@@ -160,7 +205,7 @@ document.getElementById("btn_assemble").onclick = async function() {
 
         etResult.value = hexString;
         
-        window.resultBin = u8Array;
+        saveResultBin(u8Array);
             
 
     } catch (e) {
@@ -169,24 +214,71 @@ document.getElementById("btn_assemble").onclick = async function() {
         msg = msg.replaceAll(`${filename}.`,'');
 
         etResult.value = msg;
+
+        window.resultBin = null;
+    }
+
+}
+
+function saveResultBin(u8Array){
+    // 保证是 Uint8Array
+    let u8 = u8Array;
+    if (!(u8 instanceof Uint8Array)) {
+        if (Array.isArray(u8)) {
+            u8 = Uint8Array.from(u8);
+        } else if (u8 && u8.buffer) {
+            u8 = new Uint8Array(u8.buffer, u8.byteOffset || 0, u8.byteLength || u8.length || 0);
+        } else {
+            u8 = Uint8Array.from(u8);
+        }
+    }
+    window.resultBin = u8;
+}
+
+document.getElementById("btn_assemble").onclick = async function() {
+    let codeText = editor.getValue();
+    if(codeText.trim().length == 0){
+        toast("代码不能为空！");
+        return;
+    }
+
+    if(etResult.value == "编译中..."){
+        toast("正在编译中，请稍后...");
+        return;
+    }
+
+    etResult.value = "编译中...";
+
+    if(isCoreLoade()){
+        doAssembleThumb(codeText);
+    }
+    else{
+        onWasmLoadedPostRun = function(){
+            doAssembleThumb(codeText);
+        };
     }
 
 };
 
 document.getElementById("btn_download").onclick = function() {
+    if(window.resultUrl){
+        URL.revokeObjectURL(window.resultUrl);
+        window.resultUrl = null;
+    }
     if(!window.resultBin){
         toast("代码未编译成功，无法下载！");
         return;
     }
     const blob = new Blob([window.resultBin], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
+    window.resultUrl = url;
     const a = document.createElement('a');
     a.href = url;
     a.download = 'output.bin';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    //URL.revokeObjectURL(url);
 };
 
 function toast(msg){
