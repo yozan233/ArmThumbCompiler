@@ -131,7 +131,7 @@ editor.setValue(localCode || initialCode);
 const etResultResizeObserver = new ResizeObserver(entries => {
     const entry = entries[0];
     const width = entry.contentRect.width;
-    let fontSize = (width-10) / 25.8;
+    let fontSize = (width-10) / 28;
     if(fontSize < 8) 
         fontSize = 8;
     else if(fontSize > 18)
